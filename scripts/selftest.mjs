@@ -1505,6 +1505,12 @@ test("profiles are bounded, replaceable by name, and never leak the key", () => 
   assert.equal(many.length, hermes.MAX_PROFILES);
 });
 
+test("file operations are off by default and require an explicit opt in", () => {
+  assert.equal(hermes.DEFAULT_SETTINGS.allowFileOps, false);
+  assert.equal(hermes.DEFAULT_SETTINGS.reportSession, false);
+  assert.equal(Object.assign({}, hermes.DEFAULT_SETTINGS, { allowFileOps: true }).allowFileOps, true);
+});
+
 test("the first changed line is where the cursor belongs", () => {
   assert.equal(hermes.firstChangedLine("a\nb\nc", "a\nB\nc"), 1);
   assert.equal(hermes.firstChangedLine("a\nb", "a\nb"), 0, "no change means the top");
@@ -1548,8 +1554,8 @@ test("an exported settings file carries no key, and restoring it keeps the curre
   assert.equal(exported.apiKey, "", "the key field is emptied, not dropped");
 
   const full = JSON.stringify(hermes.exportableSettings(settings, { includeSecrets: true }));
-  assert.ok(full.indexOf(key) >= 0, "the opt-in still exports them");
-  assert.equal(hermes.exportableSettings(settings, { includeSecrets: true }).secretsRedacted, undefined);
+  assert.ok(full.indexOf(key) < 0, "no export option can include them");
+  assert.equal(hermes.exportableSettings(settings, { includeSecrets: true }).secretsRedacted, true);
 
   // Restoring a redacted export must not blank the live key, nor the saved setup.
   const restored = hermes.mergeImportedSettings(settings, JSON.parse(blob));

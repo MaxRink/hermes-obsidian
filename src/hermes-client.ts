@@ -361,11 +361,9 @@ export class HermesClient {
 
   private sessionHeaders(options: ChatOptions): Record<string, string> {
     const headers: Record<string, string> = {};
-    if (this.settings.reportSession && options.sessionId) {
-      headers["X-Hermes-Session-Id"] = options.sessionId;
-    }
-    if (options.sessionKey) {
-      headers["X-Hermes-Session-Key"] = options.sessionKey.slice(0, 256);
+    if (this.settings.reportSession) {
+      if (options.sessionId) headers["X-Hermes-Session-Id"] = options.sessionId;
+      if (options.sessionKey) headers["X-Hermes-Session-Key"] = options.sessionKey.slice(0, 256);
     }
     return headers;
   }

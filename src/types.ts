@@ -65,8 +65,12 @@ export interface HermesAgentNotesSettings {
   /** Optional multi-profile prefix (`/p/<profile>`). Empty = default profile. */
   profile: string;
   apiKey: string;
+  /** Obsidian SecretStorage reference; only this identifier is persisted in settings. */
+  apiKeySecretRef: string;
   /** Extra request headers, one `Name: value` per line (Cloudflare Access, proxies). */
   extraHeaders: string;
+  /** Obsidian SecretStorage reference for extra request headers. */
+  extraHeadersSecretRef: string;
   model: string;
   /** Optional provider slug sent with each request (needed to override the model). */
   provider: string;
@@ -133,6 +137,8 @@ export interface HermesAgentNotesSettings {
    * share by accident.
    */
   exportSecrets: boolean;
+  /** One-time migration for safer defaults introduced by the SecretStorage update. */
+  securityDefaultsVersion: number;
 }
 
 export const DEFAULT_SETTINGS: HermesAgentNotesSettings = {
@@ -140,21 +146,23 @@ export const DEFAULT_SETTINGS: HermesAgentNotesSettings = {
   accessMode: "local",
   profile: "",
   apiKey: "",
+  apiKeySecretRef: "hermes-agent-notes-api-key",
   extraHeaders: "",
+  extraHeadersSecretRef: "hermes-agent-notes-extra-headers",
   model: "hermes-agent",
   provider: "",
   temperature: -1,
   probeTimeoutMs: 15000,
   chatTimeoutMs: 300000,
   streaming: false,
-  reportSession: true,
+  reportSession: false,
 
   defaultFolder: "",
   filenameStyle: "keep",
   openAfterCreate: true,
   autoFrontmatter: true,
   stripCaveats: true,
-  allowFileOps: true,
+  allowFileOps: false,
   permanentDelete: false,
   attachmentFolder: "",
   sendImages: false,
@@ -177,4 +185,5 @@ export const DEFAULT_SETTINGS: HermesAgentNotesSettings = {
   onboardingDone: false,
   autoBackup: true,
   exportSecrets: false,
+  securityDefaultsVersion: 1,
 };

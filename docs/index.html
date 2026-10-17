@@ -167,7 +167,7 @@
 <body>
 <header class="top">
   <div class="top-inner">
-    <span class="brand">Hermes Agent Notes <span class="badge">v0.1.40</span> <small>complete setup guide</small></span>
+    <span class="brand">Hermes Agent Notes <span class="badge">v0.1.41</span> <small>complete setup guide</small></span>
     <span class="top-actions">
       <a class="ghost" style="padding:7px 11px;border:1px solid var(--border);border-radius:8px" href="https://github.com/jphermans/hermes-obsidian">Repository</a>
       <button class="ghost" id="theme">Theme</button>
@@ -921,7 +921,7 @@ API_SERVER_HOST=127.0.0.1           # default, this device only — 0.0.0.0 or a
     <div class="card bad">
       <p style="margin:0"><b>A URL-selected profile only accepts a key of at least 16 characters.</b> Hermes resolves a named profile's key with <code>has_usable_secret(key, min_length=16)</code> and treats a shorter one as unusable — so it computes an expected key of empty and answers <b>401 whatever the client sends</b>, even when the <code>.env</code> and the plugin hold the same string. The default scope's guard is far more lenient, which is why this only shows up once a prefix is set. Generate one with <code>openssl rand -hex 24</code>, put it in that profile's <code>.env</code>, restart the multiplexer, and paste the same value into the plugin.</p>
     </div>
-    <p class="field">Finer control: each conversation already travels in its own lane — the plugin sends <code>X-Hermes-Session-Id</code> per conversation with a memory scope key of <code>obsidian:&lt;VaultName&gt;:&lt;sessionId&gt;</code>. Turning off <b>Report the conversation to Hermes sessions</b> writes nothing to the Hermes session store at all, at the cost of session history and background-delegation delivery.</p>
+    <p class="field">Session reporting is off by default. With it off, the plugin sends neither <code>X-Hermes-Session-Id</code> nor <code>X-Hermes-Session-Key</code>. Turning it on lets the dedicated Hermes profile retain session history and memory context; use it only when that profile belongs to this user.</p>
 
     <h2 id="phone">9 · Hermes on the phone itself</h2>
     <p>The one case where loopback is legitimate on mobile: Hermes running on that same phone (Android with Termux, for example). The plugin warns by default because <code>127.0.0.1</code> normally means the phone.</p>
@@ -1020,7 +1020,7 @@ sudo loginctl enable-linger "$USER"                #    Linux: services survive 
 
     <h2 id="security">Security</h2>
     <ul>
-      <li><b>The key protects a full agent</b> with terminal and file access on that machine. Treat it like an SSH key: keep it in <code>.env</code> on the host (mode 600), never in a note, and rotate it if it leaks.</li>
+      <li><b>The key authorizes the API profile's effective toolset</b>, including terminal access unless explicitly removed. Use one profile and key per user, remove terminal, file, memory, code execution and MCP toolsets from the API server, and verify the result with authenticated <code>GET /v1/toolsets</code>. The plugin writes notes locally through Obsidian after preview approval, so Hermes needs no vault mount.</li>
       <li><b>Prefer an overlay or Access over a bare port.</b> Tailscale or Cloudflare Access in front of a tunnel beats opening 8642 to the internet.</li>
       <li><b>Keep the API server on <code>127.0.0.1</code></b> and let the tunnel or proxy be the only way in.</li>
       <li><b>A header named <code>Authorization</code></b> in Extra request headers replaces the plugin's bearer key — that is how an authenticating proxy works, and why <code>ngrok --basic-auth</code> must be avoided.</li>
@@ -1030,9 +1030,9 @@ sudo loginctl enable-linger "$USER"                #    Linux: services survive 
     <h2 id="privacy">Privacy &amp; backups</h2>
     <ul>
       <li>Your vault never leaves the machine unless <i>you</i> send it: the plugin puts the note text it was asked about into the request. Vault <i>conventions</i> (property names, tag style, link style) are summarised and sent as context.</li>
-      <li>With <b>Report the conversation to Hermes sessions</b> on, each conversation becomes a Hermes session in that profile's <code>state.db</code> — visible with <code>hermes sessions</code> and session search. Switch it off and nothing is written server-side.</li>
-      <li>The plugin's own settings file and its export contain the API key and any extra headers <b>in plain text</b>, and a vault is usually synced. Keep those files private.</li>
-      <li><b>Chat history</b> lives in <code>&lt;vault&gt;/.obsidian/plugins/hermes-agent-notes/history.json</code> (30 sessions, newest kept) and can be searched or cleared from the panel's 🕘 button.</li>
+      <li>With <b>Report the conversation to Hermes sessions</b> on, both session headers are sent to the dedicated profile. When off, neither session header is sent.</li>
+      <li>API keys and extra authorization headers live in device-local Obsidian SecretStorage; plugin data, backups and exports contain no credential values. Each user enters their own profile key on each device.</li>
+      <li><b>Chat history</b> lives in <code>&lt;vault&gt;/.obsidian/plugins/hermes-agent-notes/history.json</code> (30 sessions, newest kept). Exclude this plugin's <code>data.json</code>, <code>settings-backup.json</code>, <code>history.json</code>, and <code>errors.log</code> from shared-vault sync to keep user settings and transcripts local.</li>
     </ul>
 
     <h2 id="defaults">Appendix: defaults at a glance</h2>
@@ -1068,7 +1068,7 @@ sudo loginctl enable-linger "$USER"                #    Linux: services survive 
       <div class="stat"><b>12</b><span>messages of chat memory sent as context</span></div>
       <div class="stat"><b>16 px</b><span>input font size on mobile, so iOS does not zoom</span></div>
     </div>
-    <p class="field">Three defaults that surprise people, all changeable under <b>Conversation</b>: <b>streaming is off</b> (it needs a CORS line on the server), <b>caveat stripping is on</b> (the assistant's “let me know if you'd like more…” never reaches a note), and <b>session reporting is on</b> (each conversation becomes a Hermes session — turn that off and nothing is stored server-side).</p>
+    <p class="field">Three defaults that surprise people, all changeable under <b>Conversation</b>: <b>streaming is off</b> (it needs a CORS line on the server), <b>caveat stripping is on</b> (the assistant's “let me know if you'd like more…” never reaches a note), and <b>session reporting is off</b> (no session or memory headers are sent to Hermes).</p>
 
     <h2 id="field">Appendix: what goes in each field</h2>
     <table>

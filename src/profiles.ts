@@ -14,7 +14,9 @@ export interface ConnectionProfile {
   accessMode: AccessMode;
   profile: string;
   apiKey: string;
+  apiKeySecretRef: string;
   extraHeaders: string;
+  extraHeadersSecretRef: string;
   model: string;
   provider: string;
   /** Last time this profile was saved or used. */
@@ -36,7 +38,9 @@ export function captureProfile(settings: HermesAgentNotesSettings, name: string,
     accessMode: settings.accessMode,
     profile: settings.profile,
     apiKey: settings.apiKey,
+    apiKeySecretRef: secretRefForProfile("profile-" + String(at), "api-key"),
     extraHeaders: settings.extraHeaders,
+    extraHeadersSecretRef: secretRefForProfile("profile-" + String(at), "extra-headers"),
     model: settings.model,
     provider: settings.provider,
     at,
@@ -52,7 +56,9 @@ export function applyProfile(
   settings.accessMode = profile.accessMode;
   settings.profile = profile.profile;
   settings.apiKey = profile.apiKey;
+  settings.apiKeySecretRef = profile.apiKeySecretRef;
   settings.extraHeaders = profile.extraHeaders;
+  settings.extraHeadersSecretRef = profile.extraHeadersSecretRef;
   if (profile.model) settings.model = profile.model;
   settings.provider = profile.provider;
   return settings;
@@ -75,7 +81,9 @@ export function normalizeProfiles(input: unknown): ConnectionProfile[] {
       accessMode: (record.accessMode as AccessMode) || "custom",
       profile: typeof record.profile === "string" ? record.profile : "",
       apiKey: typeof record.apiKey === "string" ? record.apiKey : "",
+      apiKeySecretRef: typeof record.apiKeySecretRef === "string" ? record.apiKeySecretRef : secretRefForProfile(id, "api-key"),
       extraHeaders: typeof record.extraHeaders === "string" ? record.extraHeaders : "",
+      extraHeadersSecretRef: typeof record.extraHeadersSecretRef === "string" ? record.extraHeadersSecretRef : secretRefForProfile(id, "extra-headers"),
       model: typeof record.model === "string" ? record.model : "",
       provider: typeof record.provider === "string" ? record.provider : "",
       at: typeof record.at === "number" ? record.at : 0,
@@ -103,6 +111,12 @@ export function removeProfile(list: ConnectionProfile[], id: string): Connection
 
 export function findProfile(list: ConnectionProfile[], id: string): ConnectionProfile | null {
   return list.find((entry) => entry.id === id) || null;
+}
+
+/** SecretStorage IDs are per vault/device; never store a secret in plugin data. */
+export function secretRefForProfile(id: string, field: "api-key" | "extra-headers"): string {
+  const safeId = (id || "profile").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "profile";
+  return "hermes-agent-notes-" + safeId + "-" + field;
 }
 
 /** "Remote (https://hermes.example.com, key set)" — never the key itself. */

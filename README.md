@@ -45,7 +45,7 @@ Hermes never needs access to your vault — the plugin does all the file work.
 
 ## Requirements
 
-* Obsidian **1.5.0** or newer (desktop, iOS or Android).
+* Obsidian **1.11.4** or newer (desktop, iOS or Android), for device-local SecretStorage.
 * A Hermes Agent install with its API server enabled (`API_SERVER_ENABLED=true`) and reachable from the device running Obsidian.
 * The `API_SERVER_KEY` from that instance.
 
@@ -75,7 +75,7 @@ Download `main.js`, `manifest.json` and `styles.css` from the [latest release](h
 
 The setup page is **tabbed** — *Connection · Remote access · Notes · Chat & prompts · Backup & errors · Setup guide* — and remembers the tab you were last on, so no view is a wall of settings. The installed build is a label at the top of every tab.
 
-Settings → **Hermes Agent Notes** opens on the setup page, with the installed build as a label at the top — `Hermes Agent Notes` next to a **v0.1.38** badge, and the current connection state beside it. Click the badge to copy the version for a bug report. A BRAT update that has not been reloaded shows up here immediately.
+Settings → **Hermes Agent Notes** opens on the setup page, with the installed build as a label at the top — `Hermes Agent Notes` next to a **v0.1.41** badge, and the current connection state beside it. Click the badge to copy the version for a bug report. A BRAT update that has not been reloaded shows up here immediately.
 
 On a fresh install the plugin opens a **three-step wizard** the first time it loads: pick how this device reaches Hermes, type the URL and the key, press **Test and finish**. Closing it either way marks it done, so it never nags — *Run the setup wizard* in the command palette brings it back. The steps below are the manual version of the same thing.
 
@@ -398,11 +398,11 @@ curl -sS https://hermes.example.com/health -H "Authorization: Bearer <your-key>"
 
 Then press **Test connection** in the plugin; the connection card reports the round trip, and **Test this route** under *How do you reach Hermes?* checks the route you picked.
 
-**Security.** The key protects a full agent with terminal access on that machine. Prefer Tailscale or Cloudflare Access over a bare public port, and rotate `API_SERVER_KEY` if it ever leaks.
+**Security.** Hermes API bearer keys authorize the API profile's effective toolset, including terminal access unless it is explicitly removed. The API prompt cannot narrow those permissions. For a shared vault, use a dedicated profile and key for each person, configure an explicit `api_server` toolset allowlist with no terminal, file, memory, code-execution or MCP tools, and verify the resolved list at authenticated `GET /v1/toolsets`. The plugin writes notes locally through Obsidian after preview approval, so Hermes does not need vault filesystem access. Keep the profile on a private route and rotate its key if it leaks.
 
 ## Keeping vault work in its own Hermes profile
 
-By default the plugin talks to your **main** Hermes profile, so every prompt and answer from this vault is stored in the same session store and memory as everything else you do with Hermes — `hermes sessions` lists them side by side. If you would rather keep vault work in one place on the Hermes host, give it its own **profile**. A profile *is* a separate folder:
+For a shared multi-user vault, give each person a separate **Hermes profile and key**. Each profile has its own config, skills, memory and session store. Do not share the default account's key or profile with other vault users. A profile *is* a separate folder:
 
 **Create it first — on the Hermes host.** The profile is a host-side thing: the plugin only sends HTTP requests, so it cannot create one for you, and it cannot check whether one exists. Until the profile exists *and* its API server is listening, the plugin has nothing to talk to — you will see HTTP **404** (wrong port or a prefix for a profile that is not being served) or **401** (a key belonging to another profile). You do **not** have to do this before installing or configuring the plugin, though: start on your default profile and switch later, because the whole connection is just settings. `obsidian` below is an example name — use your own. No shell handy? `hermes dashboard` → **Profiles** creates, activates and deletes profiles too, and the desktop app has the same page.
 
@@ -463,7 +463,7 @@ The plugin warns about this under the API key field whenever a profile prefix is
 
 **Two things to watch.** Two profiles that both leave `API_SERVER_PORT` unset will both try to bind **8642** — give each one its own port. And under multiplexing you only manage the *default* profile's gateway; a secondary profile's gateway must stay stopped.
 
-**Finer control.** Each conversation already travels in its own lane: the plugin sends `X-Hermes-Session-Id` per conversation, with a memory-scope key of `obsidian:<VaultName>:<sessionId>`. Turning off **Report the conversation to Hermes sessions** (Settings → *Conversation*) means nothing is written to the Hermes session store at all — at the cost of session history and background-delegation delivery.
+**Session privacy.** Session reporting is off by default. With it off, the plugin sends neither `X-Hermes-Session-Id` nor `X-Hermes-Session-Key`, avoiding shared session-history and long-term-memory lanes. Turning it on sends both headers and lets Hermes retain sessions; do that only when the profile and its session store are dedicated to that user.
 
 ## Commands
 
@@ -482,7 +482,7 @@ The plugin warns about this under the API key field whenever a profile prefix is
 | **Show detected vault conventions** | See exactly what the plugin learned — and rescan it. |
 | **Rescan vault conventions** | Force a fresh analysis. |
 | **Open the chat panel** | Sidebar conversation with quick-prompt chips, saved connections, model switching and searchable history. |
-| **Chat history** | Every finished turn is stored in `history.json`; the 🕘 button searches it and restores a conversation into the panel. |
+| **Chat history** | Every finished turn is stored in `history.json`; the 🕘 button searches it and restores a conversation into the panel. In a shared vault, exclude this plugin's `history.json` from sync if users must not see one another's transcripts. |
 | **Switch connection** | Save the current endpoint as a named profile (Local, Server) and switch between them in one click under *Connections*. |
 | **Save this conversation as a note** | Turns the whole chat panel conversation into a note — properties, one heading per question — and shows it for approval before it is written. The 📄 button in the panel header does the same. |
 | **Run the setup wizard** | Reopens the first-run wizard: route, URL, key, test. |
@@ -646,10 +646,10 @@ The vault-convention scan reads from Obsidian's cache and takes ~20 ms on a 585-
 
 ## Data, privacy and safety
 
-* Settings — including the API key and any extra headers — live in `<vault>/.obsidian/plugins/hermes-agent-notes/data.json`. Keep the vault private and prefer a key you can rotate.
+* Settings live in `<vault>/.obsidian/plugins/hermes-agent-notes/data.json`. API keys and extra authorization headers live in device-local Obsidian SecretStorage; synced plugin data contains only SecretStorage references. Each user must enter their own profile key on each device.
 * Only two things leave the vault: the conventions summary and the notes you explicitly send as context (trimmed to ~12 000 characters). The scan itself never leaves your machine.
 * The plugin never touches a note you did not ask it to change, and every write goes through the preview. A pasted image is written into your vault and linked in the message; the pixels themselves leave the device only when **Send images to the model** is on.
-* Requests go only to the Hermes URL you configure. Session reporting is opt-in and exists so long runs appear in Hermes session history.
+* Requests go only to the Hermes URL you configure. Session reporting is off by default; when enabled, session headers and long-term memory scope are sent to that profile.
 
 ## Settings file and backup
 
@@ -657,12 +657,12 @@ Settings normally live in `<vault>/.obsidian/plugins/hermes-agent-notes/data.jso
 
 | File | Where | Purpose |
 | --- | --- | --- |
-| Automatic backup | `.obsidian/plugins/hermes-agent-notes/settings-backup.json` | Written (debounced, ~1.2 s) after every settings change when *Automatic backup file* is on — the default. Recovers your setup if the plugin folder is wiped by a reinstall or a sync conflict. | 
-| Exported settings | `<default folder>/Hermes Agent Notes settings.json` | Written only when you press **Export to the vault**. A visible file you can read, version or move between machines. **Your API key and extra headers are left out** unless you turn on *Put the API key in the exported file*. |
+| Automatic backup | `.obsidian/plugins/hermes-agent-notes/settings-backup.json` | Written (debounced, ~1.2 s) after every settings change when *Automatic backup file* is on — the default. Contains settings and SecretStorage references but no credentials. |
+| Exported settings | `<default folder>/Hermes Agent Notes settings.json` | Written only when you press **Export to the vault**. A visible file you can read, version or move between machines. API keys and extra headers are always excluded. |
 
 **Restore** — either pick a JSON file from the vault (**Restore from a file…**) or read the automatic backup back (**Restore automatic backup**). Imports are validated: unknown keys and values of the wrong type are skipped and reported in the notice, so a stale or hand-edited file cannot half-break your setup. Caches (the vault analysis, the last connection state) are never exported or imported — they are rebuilt.
 
-**Where the key lives.** The automatic backup keeps your **API key and any extra headers** in plain text: it sits next to the plugin's own data file, in the same folder, with the same exposure — that is what makes it a restore. The **exported** file is the one that lands in the vault, so it is synced and easy to share by accident: by default it contains every setting *except* the key and the headers, and it says so (`secretsRedacted`). Restoring such a file keeps your current key rather than blanking it, and restoring a file that *does* carry a key tells you to delete that file if you shared it. Keep the vault private either way.
+**Multi-user sync.** SecretStorage keeps each user's key on that device, but plugin settings and local `history.json` can still be synchronized by a vault sync provider. Exclude `data.json`, `settings-backup.json`, `history.json`, and `errors.log` from a shared vault's sync so user-specific endpoint settings and conversation transcripts remain local. Keys are never included in backups or exports; users re-enter them on each device.
 
 ## Troubleshooting
 
@@ -691,8 +691,8 @@ Settings normally live in `<vault>/.obsidian/plugins/hermes-agent-notes/data.jso
 | **How do I switch between my local and remote Hermes?** | There is one **Saved setup** slot. Save the connection you use most, change the fields for the other when you need it, and press *Switch to this* to go back. Switching replaces the URL, key, headers, profile prefix, model and provider and clears the advertised model list, because the other endpoint has its own. |
 | **Can I find a conversation from yesterday?** | The 🕘 button in the chat header. It searches titles *and* message bodies, shows how long ago each was, and *Restore* puts it back in the panel — the next message simply continues with a new Hermes session. Sessions are capped at 30, newest kept, in `history.json` next to `errors.log`. |
 | **The note opened but jumped somewhere odd** | That is **Follow edits**: after an approved edit the note opens at the first changed line. Switch it off under **Follow edits** if you would rather stay where you were. |
-| **Do my Obsidian conversations mix with my other Hermes work?** | Yes by default — the plugin talks to your main profile, so vault prompts and answers sit in the same session store and memory as everything else. Give the vault its own profile to keep it in one folder: see [Keeping vault work in its own Hermes profile](#keeping-vault-work-in-its-own-hermes-profile). |
-| **Where is that text stored, and can I see it?** | With **Report the conversation to Hermes sessions** on, each conversation is a Hermes session — visible with `hermes sessions` and session search, and stored in the profile's `state.db`. Switch that setting off and nothing is written server-side at all. |
+| **Do my Obsidian conversations mix with my other Hermes work?** | Session reporting is off by default. Give each user a separate restricted Hermes profile and key; see [Keeping vault work in its own Hermes profile](#keeping-vault-work-in-its-own-hermes-profile). |
+| **Where is that text stored, and can I see it?** | Obsidian keeps its local chat history in the plugin folder. With **Report the conversation to Hermes sessions** off, it sends neither session header to the Hermes API. Turn it on only for a profile dedicated to that user. |
 
 ## Development
 

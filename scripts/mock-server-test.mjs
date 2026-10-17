@@ -180,7 +180,7 @@ await test("session headers are omitted when reporting is off", async () => {
   await client.chat([{ role: "user", content: "hi" }], { sessionId: "obsidian-abc", sessionKey: "k" });
   const call = seen.find((entry) => entry.url.endsWith("/v1/chat/completions"));
   assert.equal("x-hermes-session-id" in call.headers, false);
-  assert.equal(call.headers["x-hermes-session-key"], "k");
+  assert.equal("x-hermes-session-key" in call.headers, false);
 });
 
 await test("chatStream reassembles SSE deltas and picks up usage", async () => {

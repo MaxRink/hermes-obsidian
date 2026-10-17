@@ -493,7 +493,7 @@ export class HermesSettingTab extends PluginSettingTab {
     const keySetting = new Setting(containerEl)
       .setName("API key")
       .setClass("hermes-wide")
-      .setDesc("Must equal API_SERVER_KEY in the .env of the profile you are talking to — its own key, created for it (use the ⟳ button to make one). Stored in this vault's plugin data, so keep the vault private.")
+      .setDesc("Must equal API_SERVER_KEY in the .env of the profile you are talking to — its own key, created for it (use the ⟳ button to make one). Stored with Obsidian SecretStorage on this device; synced plugin settings contain only a local reference.")
       .addText((text) => {
         text.inputEl.type = "password";
         text.inputEl.autocomplete = "off";
@@ -923,7 +923,7 @@ export class HermesSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Copy, move and delete notes")
       .setDesc(
-        "Ask in the chat (\"move the boiler note into Archive\") or run the command, and Hermes plans the operations. Nothing changes until you approve a list of exact paths: existing notes are never overwritten, wikilinks follow a move, and vault configuration is off limits."
+        "Off by default. Turn this on only if you want copy, move and delete requests. Hermes plans operations, and nothing changes until you approve exact paths; existing notes are never overwritten and vault configuration is off limits."
       )
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.allowFileOps).onChange((value) => {
@@ -1216,35 +1216,19 @@ export class HermesSettingTab extends PluginSettingTab {
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text:
-        "Settings are stored in this vault's plugin data. With the automatic backup on they are also mirrored to " +
+        "Settings are stored in this vault's plugin data. API keys and extra authorization headers are stored by Obsidian SecretStorage and are never copied into plugin data, backups, or exports. With the automatic backup on, settings are mirrored to " +
         this.plugin.backupPath() +
-        ", so a plugin folder that gets wiped — a reinstall, a sync conflict — can be recovered. That backup keeps your API key, because it lives beside the plugin's own data file; the export below does not.",
+        ". Each device must configure its own secret value; a synced reference does not sync the secret itself.",
     });
 
     new Setting(containerEl)
       .setName("Automatic backup file")
-      .setDesc("Mirrors the settings after every change (at most once every 1.2 s). Contains the API key — it never leaves the plugin folder.")
+      .setDesc("Mirrors non-secret settings after every change (at most once every 1.2 s). API keys and extra headers are excluded.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.autoBackup).onChange((value) => {
           this.plugin.settings.autoBackup = value;
           void this.plugin.saveSettings().then(() => {
             if (value) void this.plugin.writeBackup();
-          });
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Put the API key in the exported file")
-      .setDesc(
-        "Off by default. The export is a file in your vault, so it is synced and easy to share by accident; leaving this off means the file restores every setting except the key and any extra headers (your current ones are kept when you restore)."
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.exportSecrets).onChange((value) => {
-          this.plugin.settings.exportSecrets = value;
-          void this.plugin.saveSettings().then(() => {
-            if (value) {
-              new Notice("On — the next export contains your API key in plain text. Keep that file private.", 10000);
-            }
           });
         })
       );
@@ -1256,8 +1240,7 @@ export class HermesSettingTab extends PluginSettingTab {
           this.plugin.settings.defaultFolder +
           (this.plugin.settings.defaultFolder ? "/" : "") +
           "Hermes Agent Notes settings.json" +
-          (this.plugin.settings.exportSecrets ? " — with your API key in it." : " — without your API key.") +
-          " Restore reads a JSON file you pick, or the automatic backup."
+          " — without keys or extra headers. Restore reads a JSON file you pick, or the automatic backup."
       )
       .addButton((button) =>
         button.setButtonText("Export to the vault").onClick(() => {

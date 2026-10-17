@@ -32,7 +32,7 @@ export function settingsExportPath(folder: string): string {
 /** The settings worth keeping, with caches stripped and a marker added. */
 export function exportableSettings(
   settings: HermesAgentNotesSettings,
-  options: { includeSecrets?: boolean } = {}
+  _options: { includeSecrets?: boolean } = {}
 ): Record<string, unknown> {
   const source = settings as unknown as Record<string, unknown>;
   const out: Record<string, unknown> = {};
@@ -40,23 +40,19 @@ export function exportableSettings(
     if (RUNTIME_KEYS.indexOf(key) >= 0) continue;
     out[key] = source[key];
   }
-  if (!options.includeSecrets) {
-    // The export is a *vault* file: synced, backed up, easy to share by accident. The key
-    // is the only thing protecting the Hermes API, so it is left out unless asked for.
-    for (const key of SECRET_FIELDS) {
-      if (key in out) out[key] = "";
-    }
-    if (Array.isArray(out.profiles)) {
-      out.profiles = (out.profiles as Record<string, unknown>[]).map((profile) => {
-        const copy: Record<string, unknown> = Object.assign({}, profile);
-        for (const key of SECRET_FIELDS) {
-          if (key in copy) copy[key] = "";
-        }
-        return copy;
-      });
-    }
-    out[SECRETS_MARKER] = true;
+  // Exports and backups live inside the vault and can be synced or shared. Never
+  // allow an option to put an API key or proxy credential in one of these files.
+  for (const key of SECRET_FIELDS) {
+    if (key in out) out[key] = "";
   }
+  if (Array.isArray(out.profiles)) {
+    out.profiles = (out.profiles as Record<string, unknown>[]).map((profile) => {
+      const copy: Record<string, unknown> = Object.assign({}, profile);
+      for (const key of SECRET_FIELDS) if (key in copy) copy[key] = "";
+      return copy;
+    });
+  }
+  out[SECRETS_MARKER] = true;
   out.plugin = "hermes-agent-notes";
   out.exportedAt = new Date().toISOString();
   return out;

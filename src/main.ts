@@ -29,6 +29,8 @@ import {
   describeProfile,
   findProfile,
   removeProfile,
+  normalizeProfiles,
+  secretRefForProfile,
   upsertProfile,
 } from "./profiles";
 import {
@@ -108,6 +110,14 @@ const MAX_CONTEXT_CHARS = 12000;
 /** Mentioned notes are explicit, but the request still has to stay affordable. */
 const MAX_MENTIONED_CHARS = 24000;
 const MAX_MENTIONED_NOTE_CHARS = 12000;
+
+function validSecretRef(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const field = fallback.endsWith("-extra-headers") ? "extra-headers" : "api-key";
+  return value === fallback || new RegExp("^hermes-agent-notes-profile-[a-z0-9-]{1,48}-" + field + "$").test(value)
+    ? value
+    : fallback;
+}
 
 /** How an answer actually travelled back, so the UI can be honest about it. */
 export interface TransportInfo {
@@ -266,13 +276,70 @@ export default class HermesAgentNotesPlugin extends Plugin {
     const stored = (await this.loadData()) as Partial<HermesAgentNotesSettings> | null;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, stored || {});
     if (!this.settings.model) this.settings.model = DEFAULT_SETTINGS.model;
+    if (stored && stored.securityDefaultsVersion !== 1) {
+      this.settings.allowFileOps = false;
+      this.settings.reportSession = false;
+      this.settings.securityDefaultsVersion = 1;
+    }
+    const storage = this.app.secretStorage;
+    const legacyKey = typeof stored?.apiKey === "string" ? stored.apiKey : "";
+    const legacyHeaders = typeof stored?.extraHeaders === "string" ? stored.extraHeaders : "";
+    this.settings.apiKeySecretRef = validSecretRef(stored?.apiKeySecretRef, DEFAULT_SETTINGS.apiKeySecretRef);
+    this.settings.extraHeadersSecretRef = validSecretRef(stored?.extraHeadersSecretRef, DEFAULT_SETTINGS.extraHeadersSecretRef);
+    if (legacyKey) storage.setSecret(this.settings.apiKeySecretRef, legacyKey);
+    if (legacyHeaders) storage.setSecret(this.settings.extraHeadersSecretRef, legacyHeaders);
+    this.settings.apiKey = storage.getSecret(this.settings.apiKeySecretRef) || legacyKey;
+    this.settings.extraHeaders = storage.getSecret(this.settings.extraHeadersSecretRef) || legacyHeaders;
+
+    const storedProfiles = Array.isArray(stored?.profiles) ? stored.profiles : [];
+    this.settings.profiles = normalizeProfiles(storedProfiles).map((profile, index) => {
+      const source = storedProfiles[index] as Partial<typeof profile> | undefined;
+      const keyRef = validSecretRef(source?.apiKeySecretRef, secretRefForProfile(profile.id, "api-key"));
+      const headersRef = validSecretRef(source?.extraHeadersSecretRef, secretRefForProfile(profile.id, "extra-headers"));
+      if (profile.apiKey) storage.setSecret(keyRef, profile.apiKey);
+      if (profile.extraHeaders) storage.setSecret(headersRef, profile.extraHeaders);
+      return {
+        ...profile,
+        apiKeySecretRef: keyRef,
+        extraHeadersSecretRef: headersRef,
+        apiKey: storage.getSecret(keyRef) || profile.apiKey,
+        extraHeaders: storage.getSecret(headersRef) || profile.extraHeaders,
+      };
+    });
+
+    // Upgrade older installations in place: move legacy plaintext fields out of
+    // data.json and replace the old automatic backup with a redacted one.
+    if (stored) {
+      await this.persistSettingsData();
+      if (await this.app.vault.adapter.exists(this.backupPath())) await this.writeBackup();
+    }
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    await this.persistSettingsData();
     this.scheduleBackup();
     this.refreshStatusBar();
     this.refreshViews();
+  }
+
+  private async persistSettingsData(): Promise<void> {
+    const storage = this.app.secretStorage;
+    this.settings.apiKeySecretRef = validSecretRef(this.settings.apiKeySecretRef, DEFAULT_SETTINGS.apiKeySecretRef);
+    this.settings.extraHeadersSecretRef = validSecretRef(this.settings.extraHeadersSecretRef, DEFAULT_SETTINGS.extraHeadersSecretRef);
+    storage.setSecret(this.settings.apiKeySecretRef, this.settings.apiKey || "");
+    storage.setSecret(this.settings.extraHeadersSecretRef, this.settings.extraHeaders || "");
+    for (const profile of this.settings.profiles) {
+      profile.apiKeySecretRef = validSecretRef(profile.apiKeySecretRef, secretRefForProfile(profile.id, "api-key"));
+      profile.extraHeadersSecretRef = validSecretRef(profile.extraHeadersSecretRef, secretRefForProfile(profile.id, "extra-headers"));
+      storage.setSecret(profile.apiKeySecretRef, profile.apiKey || "");
+      storage.setSecret(profile.extraHeadersSecretRef, profile.extraHeaders || "");
+    }
+    const persisted = Object.assign({}, this.settings, {
+      apiKey: "",
+      extraHeaders: "",
+      profiles: this.settings.profiles.map((profile) => ({ ...profile, apiKey: "", extraHeaders: "" })),
+    });
+    await this.saveData(persisted);
   }
 
   // --- settings persistence ------------------------------------------------
@@ -294,7 +361,7 @@ export default class HermesAgentNotesPlugin extends Plugin {
   async writeBackup(): Promise<void> {
     try {
       const path = this.backupPath();
-      await this.app.vault.adapter.write(path, JSON.stringify(exportableSettings(this.settings, { includeSecrets: true }), null, 2) + "\n");
+      await this.app.vault.adapter.write(path, JSON.stringify(exportableSettings(this.settings), null, 2) + "\n");
       this.lastBackupAt = Date.now();
     } catch (error) {
       console.warn("[Hermes Agent Notes] settings backup failed", error);
@@ -306,7 +373,7 @@ export default class HermesAgentNotesPlugin extends Plugin {
     const path = settingsExportPath(this.settings.defaultFolder);
     const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
     if (folder) await ensureFolder(this.app, folder);
-    await this.app.vault.adapter.write(path, JSON.stringify(exportableSettings(this.settings, { includeSecrets: this.settings.exportSecrets }), null, 2) + "\n");
+    await this.app.vault.adapter.write(path, JSON.stringify(exportableSettings(this.settings), null, 2) + "\n");
     return path;
   }
 
@@ -352,6 +419,10 @@ export default class HermesAgentNotesPlugin extends Plugin {
       return;
     }
     this.settings = result.settings;
+    if (raw && typeof raw === "object" && (raw as Record<string, unknown>).secretsRedacted === true) {
+      this.settings.apiKey = this.app.secretStorage.getSecret(this.settings.apiKeySecretRef) || this.settings.apiKey;
+      this.settings.extraHeaders = this.app.secretStorage.getSecret(this.settings.extraHeadersSecretRef) || this.settings.extraHeaders;
+    }
     await this.saveSettings();
     new Notice(
       "Restored " + result.applied.length + " setting" + (result.applied.length === 1 ? "" : "s") + " from " + source +
@@ -915,7 +986,14 @@ export default class HermesAgentNotesPlugin extends Plugin {
     const label = this.setupLabel();
     const captured = captureProfile(this.settings, label, Date.now());
     const existing = this.settings.profiles[0];
-    const profile = existing ? { ...captured, id: existing.id } : captured;
+    const profile = existing
+      ? {
+          ...captured,
+          id: existing.id,
+          apiKeySecretRef: existing.apiKeySecretRef,
+          extraHeadersSecretRef: existing.extraHeadersSecretRef,
+        }
+      : captured;
     this.settings.profiles = upsertProfile(this.settings.profiles, profile);
     await this.saveSettings();
     new Notice("Setup saved" + (existing ? " — it replaced the previous one." : ": ") + label, 6000);
@@ -939,6 +1017,17 @@ export default class HermesAgentNotesPlugin extends Plugin {
   }
 
   async deleteProfile(id: string): Promise<void> {
+    const profile = findProfile(this.settings.profiles, id);
+    if (profile) {
+      this.app.secretStorage.setSecret(profile.apiKeySecretRef, "");
+      this.app.secretStorage.setSecret(profile.extraHeadersSecretRef, "");
+      if (this.settings.apiKeySecretRef === profile.apiKeySecretRef) {
+        this.settings.apiKeySecretRef = DEFAULT_SETTINGS.apiKeySecretRef;
+      }
+      if (this.settings.extraHeadersSecretRef === profile.extraHeadersSecretRef) {
+        this.settings.extraHeadersSecretRef = DEFAULT_SETTINGS.extraHeadersSecretRef;
+      }
+    }
     this.settings.profiles = removeProfile(this.settings.profiles, id);
     await this.saveSettings();
   }

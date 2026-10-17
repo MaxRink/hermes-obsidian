@@ -211,10 +211,16 @@ export function makeAppObject(files: FakeFile[]) {
     revealLeaf() {},
     detachLeavesOfType() {},
   };
+  const secrets = new Map<string, string>();
   const app = {
     vault,
     workspace,
     fileManager,
+    secretStorage: {
+      getSecret: (id: string) => secrets.get(id) ?? null,
+      setSecret: (id: string, secret: string) => { secrets.set(id, secret); },
+      listSecrets: () => Array.from(secrets.keys()),
+    },
     /** Test helper: every trash/delete/rename this harness was asked to perform. */
     fileOps: calls,
     /** Test helper: pretend Obsidian has this note open while the sidebar has focus. */

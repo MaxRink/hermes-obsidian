@@ -25,7 +25,8 @@ const server = await startMockServer({ key: "test-key" });
 const app = hermes.makeAppObject(VAULT_NOTES);
 
 async function makePlugin(overrides) {
-  const plugin = new hermes.HermesAgentNotesPlugin(app, { id: "hermes-agent-notes", version: "test" });
+  const pluginApp = Object.assign({}, app, { secretStorage: makeSecretStorage() });
+  const plugin = new hermes.HermesAgentNotesPlugin(pluginApp, { id: "hermes-agent-notes", version: "test" });
   // Boot the plugin for real: onload registers views, commands, the settings tab
   // and the status bar, and mints the session id used by the session headers.
   await plugin.onload();
@@ -36,6 +37,15 @@ async function makePlugin(overrides) {
     overrides || {}
   );
   return plugin;
+}
+
+function makeSecretStorage() {
+  const secrets = new Map();
+  return {
+    getSecret: (id) => secrets.get(id) ?? null,
+    setSecret: (id, secret) => secrets.set(id, secret),
+    listSecrets: () => Array.from(secrets.keys()),
+  };
 }
 
 let passed = 0;
@@ -63,7 +73,7 @@ await test("testConnection finds the agent and records it in the settings", asyn
 });
 
 await test("a prompt typed in the setup page is answered end to end", async () => {
-  const plugin = await makePlugin();
+  const plugin = await makePlugin({ reportSession: true });
   server.seen.length = 0;
   const result = await plugin.quickPrompt("Which model are you?");
   assert.equal(result.text, server.answer);
@@ -130,6 +140,7 @@ await test("settings survive a wiped plugin folder via the automatic backup", as
   plugin.settings.baseUrl = "https://hermes.example.com";
   plugin.settings.apiKey = "secret-key";
   plugin.settings.extraHeaders = "CF-Access-Client-Id: x";
+  await plugin.saveSettings();
   await plugin.writeBackup();
 
   const path = plugin.backupPath();
@@ -137,7 +148,8 @@ await test("settings survive a wiped plugin folder via the automatic backup", as
   assert.ok(await app.vault.adapter.exists(path), "no backup file was written");
   const backup = JSON.parse(await app.vault.adapter.read(path));
   assert.equal(backup.baseUrl, "https://hermes.example.com");
-  assert.equal(backup.apiKey, "secret-key");
+  assert.equal(backup.apiKey, "", "API keys are never backed up in the vault");
+  assert.equal(backup.extraHeaders, "", "proxy credentials are never backed up in the vault");
   assert.equal("conventions" in backup, false, "caches must not be backed up");
 
   // simulate the plugin data being lost, then restore
@@ -163,18 +175,62 @@ await test("export writes a visible settings file into the vault", async () => {
   assert.equal(exported.secretsRedacted, true);
 });
 
-await test("the exported file carries the key only when asked, and the backup always does", async () => {
+await test("exports and backups never contain API keys or proxy credentials", async () => {
   const plugin = await makePlugin();
   plugin.settings.exportSecrets = true;
   const path = await plugin.exportSettings();
   const exported = JSON.parse(await app.vault.adapter.read(path));
-  assert.equal(exported.apiKey, "test-key", "the opt-in exports the key");
-  assert.equal(exported.secretsRedacted, undefined);
+  assert.equal(exported.apiKey, "", "the legacy opt-in cannot export the key");
+  assert.equal(exported.secretsRedacted, true);
 
   plugin.settings.exportSecrets = false;
   await plugin.writeBackup();
   const backup = JSON.parse(await app.vault.adapter.read(plugin.backupPath()));
-  assert.equal(backup.apiKey, "test-key", "the automatic backup keeps the key — it never leaves the plugin folder");
+  assert.equal(backup.apiKey, "", "the automatic backup excludes the key");
+  assert.equal(backup.extraHeaders, "", "the automatic backup excludes proxy credentials");
+  await plugin.saveSettings();
+  assert.equal(plugin.__data.apiKey, "", "plugin data contains only the SecretStorage reference");
+  assert.equal(plugin.__data.extraHeaders, "", "plugin data contains no proxy credential");
+  assert.equal(plugin.app.secretStorage.getSecret(plugin.settings.apiKeySecretRef), "test-key");
+  assert.equal(plugin.app.secretStorage.getSecret(plugin.settings.extraHeadersSecretRef), "");
+});
+
+await test("legacy plaintext settings migrate into device-local SecretStorage", async () => {
+  const plugin = await makePlugin({ autoBackup: false });
+  app.vault.adapter.files.set(plugin.backupPath(), JSON.stringify({ apiKey: "old-backup-key" }));
+  plugin.__data = {
+    ...plugin.__data,
+    apiKey: "legacy-api-key",
+    extraHeaders: "Authorization: Bearer legacy-proxy-token",
+    allowFileOps: true,
+    reportSession: true,
+    profiles: [{
+      id: "profile-123",
+      name: "Saved",
+      baseUrl: server.baseUrl,
+      accessMode: "local",
+      profile: "obsidian",
+      apiKey: "legacy-profile-key",
+      extraHeaders: "X-Proxy-Auth: legacy-profile-header",
+      model: "hermes-agent",
+      provider: "",
+      at: 123,
+    }],
+  };
+  await plugin.loadSettings();
+  assert.equal(plugin.settings.apiKey, "legacy-api-key");
+  assert.equal(plugin.settings.extraHeaders, "Authorization: Bearer legacy-proxy-token");
+  assert.equal(plugin.settings.profiles[0].apiKey, "legacy-profile-key");
+  assert.equal(plugin.settings.profiles[0].extraHeaders, "X-Proxy-Auth: legacy-profile-header");
+  assert.equal(plugin.settings.allowFileOps, false, "the unsafe historical default is disabled once on migration");
+  assert.equal(plugin.settings.reportSession, false, "session reporting is disabled once on migration");
+  assert.equal(plugin.__data.securityDefaultsVersion, 1);
+  assert.equal(plugin.__data.apiKey, "", "the old plaintext field is erased");
+  assert.equal(plugin.__data.profiles[0].apiKey, "", "saved profile plaintext is erased");
+  assert.equal(plugin.app.secretStorage.getSecret(plugin.settings.apiKeySecretRef), "legacy-api-key");
+  assert.equal(plugin.app.secretStorage.getSecret(plugin.settings.profiles[0].apiKeySecretRef), "legacy-profile-key");
+  const backup = JSON.parse(await app.vault.adapter.read(plugin.backupPath()));
+  assert.equal(backup.apiKey, "", "migration rewrites an existing backup without secrets");
 });
 
 await test("the automatic backup fires after a change, debounced", async () => {
